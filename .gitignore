@@ -21,6 +21,8 @@ build/
 # Environment variables
 .env
 .env.local
+.venv
+venv/
 
 # Logs
 *.log
