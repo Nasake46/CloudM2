@@ -1,0 +1,132 @@
+:root {
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  color: #f7f4ea;
+  background:
+    radial-gradient(circle at top, rgba(242, 184, 75, 0.25), transparent 32%),
+    linear-gradient(160deg, #08121d 0%, #10283b 55%, #0d4a55 100%);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.page-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.upload-panel {
+  width: min(680px, 100%);
+  padding: 32px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 28px;
+  background: rgba(6, 15, 24, 0.72);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.3);
+}
+
+.eyebrow {
+  margin: 0 0 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.24em;
+  color: #f2b84b;
+  font-size: 0.78rem;
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(2.2rem, 4vw, 3.5rem);
+  line-height: 0.98;
+}
+
+.intro {
+  margin: 16px 0 28px;
+  color: rgba(247, 244, 234, 0.78);
+  max-width: 54ch;
+}
+
+.upload-form {
+  display: grid;
+  gap: 18px;
+}
+
+.file-field {
+  display: grid;
+  gap: 10px;
+  padding: 18px;
+  border: 1px dashed rgba(242, 184, 75, 0.55);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.file-field span {
+  font-weight: 600;
+}
+
+.file-field input {
+  color: #f7f4ea;
+}
+
+button {
+  border: 0;
+  border-radius: 999px;
+  padding: 14px 22px;
+  font-weight: 700;
+  color: #08121d;
+  background: linear-gradient(135deg, #f2b84b 0%, #f4d58d 100%);
+  cursor: pointer;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+
+button:hover:enabled {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 28px rgba(242, 184, 75, 0.28);
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.info-card,
+.status {
+  margin-top: 18px;
+  display: grid;
+  gap: 4px;
+  padding: 18px;
+  border-radius: 18px;
+}
+
+.info-card {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.status.success {
+  background: rgba(63, 174, 115, 0.16);
+  border: 1px solid rgba(63, 174, 115, 0.45);
+}
+
+.status.error {
+  background: rgba(210, 82, 82, 0.16);
+  border: 1px solid rgba(210, 82, 82, 0.45);
+}
+
+@media (max-width: 640px) {
+  .upload-panel {
+    padding: 24px;
+    border-radius: 22px;
+  }
+}
