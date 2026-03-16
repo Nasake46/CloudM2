@@ -1,0 +1,45 @@
+name: Frontend Build and Push to ACR
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/frontend/**'
+      - '.github/workflows/frontend-build-push.yml'
+  workflow_dispatch:
+
+env:
+  IMAGE_NAME: cloudm2-frontend
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Login to Azure Container Registry
+        uses: azure/docker-login@v2
+        with:
+          login-server: ${{ secrets.ACR_LOGIN_SERVER }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Docker build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./src/frontend
+          push: true
+          build-args: |
+            VITE_API_BASE_URL=${{ secrets.FRONTEND_API_BASE_URL }}
+          tags: |
+            ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+            ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:latest
+
+      - name: Deploy to Azure Web App
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ secrets.AZURE_WEBAPP_FRONT_NAME }}
+          images: ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_FRONT_PUBLISH_PROFILE }}
