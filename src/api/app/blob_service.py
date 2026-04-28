@@ -2,6 +2,7 @@ from azure.storage.blob import (BlobServiceClient, generate_blob_sas, BlobSasPer
 from datetime import datetime, timedelta
 from .config import settings
 
+
 blob_service = BlobServiceClient.from_connection_string(settings.BLOB_CONNECTION_STRING)
 account_key = blob_service.credential.account_key
 

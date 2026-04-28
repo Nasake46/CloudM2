@@ -1,0 +1,12 @@
+{
+    "scriptFile": "__init__.py",
+    "bindings": [
+        {
+            "name": "blobTrigger1",
+            "type": "blobTrigger",
+            "direction": "in",
+            "path": "doc-storage/{name}",
+            "connection": "dockstorage"
+        }
+    ]
+}
