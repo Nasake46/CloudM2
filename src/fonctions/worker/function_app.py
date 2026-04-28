@@ -14,14 +14,22 @@ def _now_iso() -> str:
 def _get_cosmos_container():
     global _cosmos_client
     if _cosmos_client is None:
-        endpoint = os.environ["COSMOS_ENDPOINT"]
-        key = os.environ["COSMOS_KEY"]
-        _cosmos_client = CosmosClient(endpoint, credential=key)
+        conn_str = os.getenv("COSMOS_CONNECTION_STRING")
+        if conn_str:
+            _cosmos_client = CosmosClient.from_connection_string(conn_str)
+        else:
+            endpoint = os.getenv("COSMOS_ENDPOINT")
+            key = os.getenv("COSMOS_KEY")
+            if not endpoint or not key:
+                raise RuntimeError(
+                    "Configuration Cosmos manquante. Définis soit COSMOS_CONNECTION_STRING, "
+                    "soit (COSMOS_ENDPOINT et COSMOS_KEY) dans les App Settings de la Function."
+                )
+            _cosmos_client = CosmosClient(endpoint, credential=key)
 
-    db_name = os.getenv("COSMOS_DATABASE", "db-doc")
-    container_name = os.getenv("COSMOS_CONTAINER", "jobs")
-    db = _cosmos_client.get_database_client(db_name)
-    return db.get_container_client(container_name)
+    database = os.getenv("COSMOS_DATABASE", "db-doc")
+    container = os.getenv("COSMOS_CONTAINER", "jobs")
+    return _cosmos_client.get_database_client(database).get_container_client(container)
 
 def _extract_job_id(blob_name: str) -> str | None:
     # `myblob.name` peut être "container/job_id/file.ext" ou "job_id/file.ext"
