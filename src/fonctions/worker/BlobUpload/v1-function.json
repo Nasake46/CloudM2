@@ -2,7 +2,7 @@
     "scriptFile": "__init__.py",
     "bindings": [
         {
-            "name": "blobTrigger1",
+            "name": "myblob",
             "type": "blobTrigger",
             "direction": "in",
             "path": "doc-storage/{name}",
