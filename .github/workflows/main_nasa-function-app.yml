@@ -9,12 +9,12 @@ on:
     branches:
       - main
     paths:
-        - "src/functions/worker/**"
+        - "src/fonctions/worker/**"
         - ".github/workflows/main_nasa-function-app.yml"
   workflow_dispatch:
 
 env:
-  AZURE_FUNCTIONAPP_PACKAGE_PATH: './src/functions/worker' # set this to the path to your web app project, defaults to the repository root
+  AZURE_FUNCTIONAPP_PACKAGE_PATH: './src/fonctions/worker' # path to the Azure Functions project
   PYTHON_VERSION: '3.12' # set this to the python version to use (supports 3.6, 3.7, 3.8)
 
 jobs:
@@ -42,12 +42,14 @@ jobs:
       - name: Install dependencies
         run: |
           cd $AZURE_FUNCTIONAPP_PACKAGE_PATH
-          pip install -r requirements.txt
+          pip install -r requirements.txt --target=".python_packages/lib/site-packages"
 
       # Optional: Add step to run tests here
 
       - name: Zip artifact for deployment
-        run: zip release.zip ./* -r
+        run: |
+          cd $AZURE_FUNCTIONAPP_PACKAGE_PATH
+          zip ../../../release.zip ./* .python_packages -r
 
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
@@ -69,11 +71,6 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: python-app
-
-      - name: Unzip artifact for deployment
-        run: |
-          unzip release.zip
-          rm release.zip
         
       - name: Login to Azure
         uses: azure/login@v2
@@ -88,5 +85,5 @@ jobs:
         with:
           app-name: 'nasa-function-app'
           slot-name: 'Production'
-          package: ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
+          package: release.zip
           
