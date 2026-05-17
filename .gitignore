@@ -21,6 +21,8 @@ build/
 # Environment variables
 .env
 .env.local
+local.settings.json
+**/local.settings.json
 .venv
 venv/
 

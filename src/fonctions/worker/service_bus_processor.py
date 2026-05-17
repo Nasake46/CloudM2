@@ -6,14 +6,23 @@ from pathlib import PurePosixPath
 
 import azure.functions as func
 import requests
+from azure.cosmos.exceptions import CosmosResourceNotFoundError
 
-from cosmos_jobs import now_iso, update_job
+from blob_storage import blob_exists
+from cosmos_jobs import get_job, now_iso, update_job
+from service_bus_errors import (
+    AiProcessingError,
+    DocumentNotFoundError,
+    MalformedMessageError,
+)
+from service_bus_security import public_error_message
 from signalr_messages import HUB_NAME, job_update_payload, serialize_signalr_messages
 
 service_bus_bp = func.Blueprint()
 
 OPENAI_CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
+OPENAI_MAX_ATTEMPTS = int(os.getenv("OPENAI_MAX_ATTEMPTS", "3"))
 
 
 def get_file_name(payload: dict) -> str:
@@ -71,75 +80,91 @@ def generate_ai_tags(file_name: str) -> list[str]:
         "Retourne uniquement un tableau JSON de chaines."
     )
 
-    response = requests.post(
-        OPENAI_CHAT_COMPLETIONS_URL,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "model": model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "Tu es un assistant qui genere des tags documentaires. "
-                        "Tu reponds uniquement avec du JSON valide."
-                    ),
+    last_error: Exception | None = None
+    for attempt in range(1, OPENAI_MAX_ATTEMPTS + 1):
+        try:
+            response = requests.post(
+                OPENAI_CHAT_COMPLETIONS_URL,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
                 },
-                {"role": "user", "content": prompt},
-            ],
-            "temperature": 0.2,
-            "max_tokens": 120,
-        },
-        timeout=20,
-    )
-    response.raise_for_status()
+                json={
+                    "model": model,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": (
+                                "Tu es un assistant qui genere des tags documentaires. "
+                                "Tu reponds uniquement avec du JSON valide."
+                            ),
+                        },
+                        {"role": "user", "content": prompt},
+                    ],
+                    "temperature": 0.2,
+                    "max_tokens": 120,
+                },
+                timeout=20,
+            )
+            response.raise_for_status()
+            data = response.json()
+            content = data["choices"][0]["message"]["content"].strip()
+            return parse_ai_tags(content)
+        except Exception as exc:
+            last_error = exc
+            logging.warning(
+                "OpenAI attempt %s/%s failed for file_name=%s",
+                attempt,
+                OPENAI_MAX_ATTEMPTS,
+                file_name,
+            )
 
-    data = response.json()
-    content = data["choices"][0]["message"]["content"].strip()
-    return parse_ai_tags(content)
-
-
-def generate_fallback_tags(file_name: str) -> list[str]:
-    stem = PurePosixPath(file_name).stem.lower()
-    extension = PurePosixPath(file_name).suffix.lstrip(".").lower()
-    words = re.split(r"[^0-9A-Za-zÀ-ÖØ-öø-ÿ]+", stem)
-    ignored_words = {
-        "a",
-        "au",
-        "aux",
-        "de",
-        "des",
-        "du",
-        "en",
-        "et",
-        "la",
-        "le",
-        "les",
-        "un",
-        "une",
-    }
-
-    tags = normalize_tags(
-        [
-            word
-            for word in words
-            if len(word) >= 2 and word not in ignored_words
-        ]
-    )
-    if extension:
-        tags.append(extension)
-    tags.extend(["document", "fichier", "cloud"])
-    return normalize_tags(tags)[:8]
+    raise AiProcessingError(
+        f"Échec répété de l'appel IA après {OPENAI_MAX_ATTEMPTS} tentatives."
+    ) from None
 
 
-def generate_tags(file_name: str) -> list[str]:
+def parse_queue_message(raw_body: str) -> tuple[dict, str]:
     try:
-        return generate_ai_tags(file_name)
-    except Exception:
-        logging.exception("OpenAI tag generation failed for file_name=%s", file_name)
-        return generate_fallback_tags(file_name)
+        payload = json.loads(raw_body)
+    except json.JSONDecodeError as exc:
+        raise MalformedMessageError("Le message Service Bus n'est pas du JSON valide.") from exc
+
+    if not isinstance(payload, dict):
+        raise MalformedMessageError("Le corps du message doit être un objet JSON.")
+
+    job_id = payload.get("id") or payload.get("jobId")
+    if not isinstance(job_id, str) or not job_id.strip():
+        raise MalformedMessageError("Le message doit contenir un champ 'id' ou 'jobId'.")
+
+    return payload, job_id.strip()
+
+
+def ensure_document_exists(payload: dict, job_id: str) -> None:
+    try:
+        get_job(job_id)
+    except CosmosResourceNotFoundError as exc:
+        raise DocumentNotFoundError(f"Job Cosmos introuvable : {job_id}") from exc
+
+    blob_name = payload.get("blobName")
+    if not isinstance(blob_name, str) or not blob_name.strip():
+        raise DocumentNotFoundError("Le message ne contient pas de 'blobName' valide.")
+
+    if not blob_exists(blob_name.strip()):
+        raise DocumentNotFoundError(f"Blob introuvable : {blob_name.strip()}")
+
+
+def publish_processing_failure(
+    job_id: str,
+    error_message: str,
+    signalRMessages: func.Out[str],
+) -> None:
+    update_job(job_id, {"status": "FAILED", "error": error_message})
+    signalRMessages.set(
+        serialize_signalr_messages(
+            job_update_payload(job_id, "FAILED", error=error_message)
+        )
+    )
 
 
 @service_bus_bp.function_name(name="ProcessDocument")
@@ -156,24 +181,23 @@ def generate_tags(file_name: str) -> list[str]:
 )
 def process_document(msg: func.ServiceBusMessage, signalRMessages: func.Out[str]):
     raw_body = msg.get_body().decode("utf-8")
-    logging.info("Service Bus message received: %s", raw_body)
+    delivery_count = getattr(msg, "delivery_count", None)
+    logging.info(
+        "Service Bus message received delivery_count=%s body=%s",
+        delivery_count,
+        raw_body,
+    )
+
+    payload, job_id = parse_queue_message(raw_body)
 
     try:
-        payload = json.loads(raw_body)
-    except json.JSONDecodeError:
-        logging.exception("Service Bus message is not valid JSON")
-        raise
+        ensure_document_exists(payload, job_id)
 
-    job_id = payload.get("id") or payload.get("jobId")
-    if not job_id:
-        raise ValueError("Service Bus message must contain an 'id' or 'jobId' field")
-
-    try:
         update_job(job_id, {"status": "PROCESSING"})
         logging.info("Job %s updated: status=PROCESSING", job_id)
 
         file_name = get_file_name(payload)
-        tags = generate_tags(file_name)
+        tags = generate_ai_tags(file_name)
 
         update_job(
             job_id,
@@ -191,19 +215,15 @@ def process_document(msg: func.ServiceBusMessage, signalRMessages: func.Out[str]
                 job_update_payload(job_id, "PROCESSED", tags=tags),
             )
         )
-    except Exception:
-        logging.exception("Service Bus processing failed for job_id=%s", job_id)
+    except Exception as exc:
+        error_message = public_error_message(exc)
+        logging.error(
+            "Service Bus processing failed for job_id=%s error_type=%s",
+            job_id,
+            type(exc).__name__,
+        )
         try:
-            update_job(job_id, {"status": "FAILED", "error": "Traitement en erreur."})
-            signalRMessages.set(
-                serialize_signalr_messages(
-                    job_update_payload(
-                        job_id,
-                        "FAILED",
-                        error="Traitement en erreur.",
-                    )
-                )
-            )
+            publish_processing_failure(job_id, error_message, signalRMessages)
         except Exception:
             logging.exception("Failed to publish FAILED status for job_id=%s", job_id)
         raise

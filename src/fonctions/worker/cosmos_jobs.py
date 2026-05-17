@@ -33,6 +33,11 @@ def get_cosmos_container():
     return _cosmos_client.get_database_client(database).get_container_client(container)
 
 
+def get_job(job_id: str) -> dict[str, Any]:
+    container = get_cosmos_container()
+    return container.read_item(item=job_id, partition_key="JOB")
+
+
 def update_job(job_id: str, changes: dict[str, Any]) -> dict[str, Any]:
     container = get_cosmos_container()
     item = container.read_item(item=job_id, partition_key="JOB")
