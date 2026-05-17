@@ -20,40 +20,28 @@ const API_BASE_URL =
 
 const SIGNALR_WAIT_MS = 10 * 60 * 1000;
 
-/** En dev, URL vide = requetes via le proxy Vite (/api -> localhost:7071), sans CORS. */
-function getFunctionsBaseUrl(): string {
-  if (import.meta.env.DEV) {
-    return "";
-  }
+type SignalRConnectionInfo = {
+  url: string;
+  accessToken: string;
+};
 
-  const configured = import.meta.env.VITE_FUNCTIONS_BASE_URL?.replace(/\/$/, "");
-  if (!configured) {
-    return "https://nasa-function-app.azurewebsites.net";
+async function negotiateSignalR(): Promise<SignalRConnectionInfo> {
+  const response = await fetch(`${API_BASE_URL}/signalr/negotiate`, {
+    method: "POST"
+  });
+  if (!response.ok) {
+    throw new Error("Negotiation SignalR echouee.");
   }
-  if (!/^https?:\/\//i.test(configured)) {
-    return `https://${configured}`;
-  }
-  return configured;
+  return response.json() as Promise<SignalRConnectionInfo>;
 }
 
-function createJobHubConnection(): signalR.HubConnection {
-  const functionsBase = getFunctionsBaseUrl();
-  const hubUrl = functionsBase ? `${functionsBase}/api` : "/api";
-
+async function createJobHubConnection(): Promise<signalR.HubConnection> {
+  const info = await negotiateSignalR();
   return new signalR.HubConnectionBuilder()
-    .withUrl(hubUrl, {
+    .withUrl(info.url, {
       accessTokenFactory: async () => {
-        const negotiateUrl = functionsBase
-          ? `${functionsBase}/api/negotiate`
-          : "/api/negotiate";
-        const response = await fetch(negotiateUrl, {
-          method: "POST"
-        });
-        if (!response.ok) {
-          throw new Error("Negotiation SignalR echouee.");
-        }
-        const data = (await response.json()) as { accessToken: string };
-        return data.accessToken;
+        const fresh = await negotiateSignalR();
+        return fresh.accessToken;
       }
     })
     .withAutomaticReconnect()
@@ -117,13 +105,13 @@ export default function App() {
     setPipelineStatus("Connexion SignalR…");
 
     let cancelled = false;
-    const connection = createJobHubConnection();
+    let connection: signalR.HubConnection | null = null;
 
     const timeoutId = window.setTimeout(() => {
       if (!cancelled) {
         setToastError("Delai depasse en attendant la fin du traitement.");
         setIsWaitingProcessed(false);
-        void connection.stop();
+        void connection?.stop();
       }
     }, SIGNALR_WAIT_MS);
 
@@ -141,7 +129,7 @@ export default function App() {
         });
         setIsWaitingProcessed(false);
         window.clearTimeout(timeoutId);
-        void connection.stop();
+        void connection?.stop();
         return;
       }
 
@@ -151,14 +139,17 @@ export default function App() {
         );
         setIsWaitingProcessed(false);
         window.clearTimeout(timeoutId);
-        void connection.stop();
+        void connection?.stop();
       }
     };
 
-    connection.on("jobUpdated", handleJobUpdated);
-
     void (async () => {
       try {
+        connection = await createJobHubConnection();
+        if (cancelled) {
+          return;
+        }
+        connection.on("jobUpdated", handleJobUpdated);
         await connection.start();
         if (!cancelled) {
           setPipelineStatus("En attente du traitement…");
@@ -180,8 +171,8 @@ export default function App() {
     return () => {
       cancelled = true;
       window.clearTimeout(timeoutId);
-      connection.off("jobUpdated", handleJobUpdated);
-      void connection.stop();
+      connection?.off("jobUpdated", handleJobUpdated);
+      void connection?.stop();
     };
   }, [success?.job_id]);
 

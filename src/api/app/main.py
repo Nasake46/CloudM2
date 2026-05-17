@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .routes_jobs import router as jobs_router
+from .routes_signalr import router as signalr_router
 
 app = FastAPI(
     title="Doc Processing API", 
@@ -12,9 +13,8 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        "https://cloud-m2-bice.vercel.app",
         "https://front-doc-nasa-axatcrgwhngjgrdc.francecentral-01.azurewebsites.net",
-        "https://cloud-m2-6xvgpum0p-wilfrids-projects-2f5f8d0d.vercel.app",
-        "https://cloud-m2-bice.vercel.app"
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -22,6 +22,7 @@ app.add_middleware(
 )
 
 app.include_router(jobs_router)
+app.include_router(signalr_router)
 
 @app.get("/health")
 def health():

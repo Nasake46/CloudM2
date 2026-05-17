@@ -21,16 +21,19 @@ Ce guide décrit les actions à faire **dans Azure** après déploiement du code
 
 4. **Enregistrer** et redémarrer l’app si demandé.
 
-## 3. CORS sur le Function App
+## 3. Negotiate via l'API (pas de CORS navigateur)
 
-Le front appelle `POST /api/negotiate` sur le Function App.
+Le front appelle `POST {API}/signalr/negotiate` ; l'API appelle la Function en serveur-a-serveur.
 
-1. Function App → **Paramètres** → **CORS**.
-2. Origines autorisées :
-   - `http://localhost:5173`
-   - `http://127.0.0.1:5173`
-   - URL du front déployé (ex. `https://front-doc-nasa-....azurewebsites.net`)
-3. Désactiver « Credentials » sauf besoin explicite (le front n’envoie pas de cookies).
+Configurer sur l'**API** (App Service ou `.env`) :
+
+| Variable | Exemple |
+|----------|---------|
+| `FUNCTIONS_BASE_URL` | `https://nasa-function-app-h3dwcuhfhwaha2da.francecentral-01.azurewebsites.net` |
+
+Le CORS du Function App pour le navigateur n'est **plus necessaire** pour SignalR.
+
+Front de reference : `https://cloud-m2-bice.vercel.app` (doit etre dans `allow_origins` de l'API).
 
 ## 4. Variables du front (build)
 
@@ -39,11 +42,7 @@ Lors du build Docker / CI, définir :
 | Variable | Exemple |
 |----------|---------|
 | `VITE_API_BASE_URL` | `https://api-doc-nasa.azurewebsites.net` |
-| `VITE_FUNCTIONS_BASE_URL` | `https://nasa-function-app.azurewebsites.net` |
-
-En local, copier `src/frontend/.env.example` vers `.env` et adapter les URLs.
-
-Secret GitHub Actions suggéré : `FRONTEND_FUNCTIONS_BASE_URL` (à ajouter au workflow comme pour l’API).
+Seule `VITE_API_BASE_URL` est requise cote front pour SignalR.
 
 ## 5. Vérifications
 
