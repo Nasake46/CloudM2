@@ -1,87 +1,143 @@
-# Azure SignalR — configuration portail
+# Notifications temps réel — Azure SignalR
 
-Ce guide décrit les actions à faire **dans Azure** après déploiement du code SignalR du repo.
+Ce document explique la partie **§7 de l’énoncé** : informer le frontend à chaque étape du pipeline, sans recharger la page.
 
-## 1. Créer Azure SignalR Service
+---
 
-1. Portail Azure → **Créer une ressource** → **SignalR Service**.
-2. Choisir le même abonnement / groupe de ressources que le Function App `nasa-function-app`.
-3. **Mode de service** : **Serverless** (obligatoire avec Azure Functions).
-4. Créer la ressource, puis **Paramètres** → **Clés** → copier la **Chaîne de connexion primaire**.
+## Rôle dans le projet
 
-## 2. Lier SignalR au Function App
+| Élément | Valeur |
+|---------|--------|
+| Service Azure | **Azure SignalR** (mode **Serverless**) |
+| Hub | `jobs` |
+| Événement reçu par le front | `jobUpdated` |
+| Payload | `{ jobId, status, tags?, error? }` |
 
-1. Ouvrir **nasa-function-app** (Function App).
-2. **Paramètres** → **Variables d’environnement** (ou Configuration → Application settings).
-3. Ajouter :
+### Statuts envoyés au frontend
+
+| Statut | Quand |
+|--------|--------|
+| `UPLOADED` | Fichier reçu dans Blob Storage (`BlobUpload`) |
+| `PROCESSING` | Début du traitement IA (`ProcessDocument`) |
+| `PROCESSED` | Tags générés et enregistrés |
+| `FAILED` | Erreur de traitement ou passage en DLQ |
+
+Le front gère aussi `ERROR` pour rester compatible avec l’énoncé (`FAILED` = équivalent fonctionnel).
+
+---
+
+## Comment ça marche (schéma simple)
+
+```
+1. Le navigateur appelle l’API :  POST /signalr/negotiate
+2. L’API appelle la Function :     POST /api/negotiate
+3. La Function renvoie :           { url, accessToken }
+4. Le navigateur ouvre un WebSocket vers Azure SignalR
+5. Les Functions publient les mises à jour (binding SignalR)
+6. Le front écoute jobUpdated et met à jour l’UI
+```
+
+**Pourquoi passer par l’API ?**  
+Le navigateur n’appelle pas directement la Function App : cela évite les problèmes **CORS** entre Vercel / localhost et Azure Functions.
+
+Fichiers utiles :
+
+- Function : `signalr_negotiate.py` (`Negotiate`)
+- API : `routes_signalr.py`
+- Émission des messages : `signalr_messages.py` (utilisé par `BlobUpload`, `ProcessDocument`, `ProcessDeadLetter`)
+- Client : `src/frontend/src/App.tsx`
+
+---
+
+## Configuration Azure (portail)
+
+### Étape 1 — Créer SignalR
+
+1. Portail Azure → **Créer une ressource** → **SignalR Service**
+2. Même abonnement / groupe de ressources que la Function App
+3. **Mode de service** : **Serverless** (obligatoire avec Azure Functions)
+4. Après création : **Paramètres** → **Clés** → copier la **chaîne de connexion primaire**
+
+### Étape 2 — Lier à la Function App
+
+Function App **`nasa-function-app`** → **Paramètres** → **Variables d’application** :
 
 | Nom | Valeur |
 |-----|--------|
 | `AzureSignalRConnectionString` | Chaîne de connexion SignalR (étape 1) |
 
-4. **Enregistrer** et redémarrer l’app si demandé.
+Enregistrer et redémarrer si nécessaire.
 
-## 3. Negotiate via l'API (pas de CORS navigateur)
+### Étape 3 — Lier à l’API
 
-Le front appelle `POST {API}/signalr/negotiate` ; l'API appelle la Function en serveur-a-serveur.
+Sur l’**App Service API** (ou fichier `.env` en local) :
 
-Configurer sur l'**API** (App Service ou `.env`) :
+| Nom | Valeur |
+|-----|--------|
+| `FUNCTIONS_BASE_URL` | URL de la Function App, ex. `https://nasa-function-app-....azurewebsites.net` |
 
-| Variable | Exemple |
-|----------|---------|
-| `FUNCTIONS_BASE_URL` | `https://nasa-function-app-h3dwcuhfhwaha2da.francecentral-01.azurewebsites.net` |
+L’API utilise cette URL pour proxyfier `POST /signalr/negotiate`.
 
-Le CORS du Function App pour le navigateur n'est **plus necessaire** pour SignalR.
+### Étape 4 — Frontend (build)
 
-Front de reference : `https://cloud-m2-bice.vercel.app` (doit etre dans `allow_origins` de l'API).
+| Nom | Valeur |
+|-----|--------|
+| `VITE_API_BASE_URL` | URL de l’API FastAPI (pas la Function App) |
 
-## 4. Variables du front (build)
+Exemple production : `https://api-doc-nasa.azurewebsites.net`  
+Le front appelle uniquement `{VITE_API_BASE_URL}/signalr/negotiate`.
 
-Lors du build Docker / CI, définir :
+### Étape 5 — CORS de l’API
 
-| Variable | Exemple |
-|----------|---------|
-| `VITE_API_BASE_URL` | `https://api-doc-nasa.azurewebsites.net` |
-Seule `VITE_API_BASE_URL` est requise cote front pour SignalR.
+L’origine du front doit être autorisée dans `main.py` (`allow_origins`), par ex. :
 
-## 5. Vérifications
+- `https://cloud-m2-bice.vercel.app`
+- `http://localhost:5173` (dev)
 
-1. `POST https://<function-app>.azurewebsites.net/api/negotiate`  
-   → réponse JSON avec `url` et `accessToken`.
-2. Uploader un document depuis le front.
-3. Dans les logs Function App : `Negotiate`, `BlobUpload`, `ProcessDocument` sans erreur SignalR.
-4. Toast avec tags après traitement, sans polling.
+---
 
-## 6. Developpement local (CORS)
+## Développement local
 
-Le front Vite (`localhost:5173`) ne doit **pas** appeler directement `http://localhost:7071` (CORS bloque).
+1. Copier `src/fonctions/worker/local.settings.json.example` → `local.settings.json`  
+   (y mettre `AzureSignalRConnectionString`)
+2. Démarrer les Functions : `func start` dans `src/fonctions/worker`
+3. Démarrer l’API : uvicorn sur `src/api` avec `FUNCTIONS_BASE_URL=http://localhost:7071`
+4. Démarrer le front : `npm run dev` dans `src/frontend` avec `VITE_API_BASE_URL=http://localhost:8000`
 
-**Solution dans le repo** : proxy Vite (`vite.config.ts`) redirige `/api` vers `localhost:7071`. En mode `npm run dev`, les appels passent par `/api/negotiate` (meme origine).
+Le front appelle l’**API** (`/signalr/negotiate`), pas `localhost:7071` directement.
 
-1. Demarrer les Functions : `func start` dans `src/fonctions/worker`
-2. Demarrer le front : `npm run dev` dans `src/frontend`
-3. Copier `local.settings.json.example` vers `local.settings.json` (CORS + `AzureSignalRConnectionString`)
+---
 
-Si vous testez sans proxy, ajoutez CORS dans `host.json` ou `local.settings.json` sous `Host.CORS`.
+## Vérifier que tout fonctionne
 
-## 7. Depannage
+1. **Negotiate**  
+   `POST https://<votre-api>/signalr/negotiate`  
+   → JSON avec `url` et `accessToken`
 
-| Symptome | Cause probable |
-|----------|----------------|
-| Erreur CORS sur negotiate (local) | Front appele 7071 directement ; relancer `npm run dev` (proxy) ou configurer CORS |
-| Erreur CORS sur negotiate (Azure) | Origine front absente du CORS Function App |
-| `Connexion SignalR impossible` | `AzureSignalRConnectionString` manquante ou mode SignalR != Serverless |
-| URL Functions sans `https://` | Corriger `VITE_FUNCTIONS_BASE_URL=https://...` |
-| Pas de toast après upload | Binding SignalR ou hub `jobs` ; vérifier logs `ProcessDocument` |
-| 404 sur `/api/negotiate` | Function `Negotiate` non déployée ; redéployer le worker |
+2. **Pipeline complet**  
+   - Créer un job et uploader un fichier sur le front  
+   - Voir les statuts évoluer : `UPLOADED` → `PROCESSING` → `PROCESSED`  
+   - Toast avec les tags, sans rafraîchir la page
 
-## Architecture
+3. **Logs Function App**  
+   Pas d’erreur SignalR sur `BlobUpload` ou `ProcessDocument`
 
-```
-Front --POST /api/negotiate--> Function App --token--> Azure SignalR
-Front <--WebSocket jobUpdated-- Azure SignalR <--binding-- Worker (BlobUpload, ProcessDocument)
-```
+---
 
-Hub SignalR : `jobs`  
-Événement client : `jobUpdated`  
-Payload : `{ jobId, status, tags?, error? }`
+## Dépannage rapide
+
+| Problème | Piste de solution |
+|----------|-------------------|
+| `Connexion SignalR impossible` | Vérifier `AzureSignalRConnectionString` et mode **Serverless** |
+| 502 sur `/signalr/negotiate` | Vérifier `FUNCTIONS_BASE_URL` et que `Negotiate` est déployée |
+| Pas de mise à jour après upload | Logs `ProcessDocument` ; hub `jobs` ; événement `jobUpdated` |
+| CORS en local | `VITE_API_BASE_URL` doit pointer vers l’API (8000), pas vers 7071 |
+| Pas de toast en prod | CORS API : origine Vercel dans `allow_origins` |
+
+---
+
+## Résumé pour l’oral / le rapport
+
+> « À chaque changement d’état du job, les Azure Functions envoient un message SignalR. Le frontend ouvre une connexion WebSocket après négociation via notre API, et met à jour l’interface dès réception de `jobUpdated`. »
+
+Voir aussi : [README.md](../README.md) · [SERVICE_BUS_DLQ_AZURE.md](SERVICE_BUS_DLQ_AZURE.md)
