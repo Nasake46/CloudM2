@@ -255,3 +255,4 @@ Scénarios détaillés : [docs/SERVICE_BUS_DLQ_AZURE.md](docs/SERVICE_BUS_DLQ_AZ
 
 - [SignalR sur Azure](docs/SIGNALR_AZURE.md)  
 - [Service Bus et DLQ](docs/SERVICE_BUS_DLQ_AZURE.md)  
+- [Tagging IA](docs/AI_TAGGING.md)
