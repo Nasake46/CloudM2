@@ -53,12 +53,26 @@ Secret GitHub Actions suggéré : `FRONTEND_FUNCTIONS_BASE_URL` (à ajouter au w
 3. Dans les logs Function App : `Negotiate`, `BlobUpload`, `ProcessDocument` sans erreur SignalR.
 4. Toast avec tags après traitement, sans polling.
 
-## 6. Dépannage
+## 6. Developpement local (CORS)
 
-| Symptôme | Cause probable |
+Le front Vite (`localhost:5173`) ne doit **pas** appeler directement `http://localhost:7071` (CORS bloque).
+
+**Solution dans le repo** : proxy Vite (`vite.config.ts`) redirige `/api` vers `localhost:7071`. En mode `npm run dev`, les appels passent par `/api/negotiate` (meme origine).
+
+1. Demarrer les Functions : `func start` dans `src/fonctions/worker`
+2. Demarrer le front : `npm run dev` dans `src/frontend`
+3. Copier `local.settings.json.example` vers `local.settings.json` (CORS + `AzureSignalRConnectionString`)
+
+Si vous testez sans proxy, ajoutez CORS dans `host.json` ou `local.settings.json` sous `Host.CORS`.
+
+## 7. Depannage
+
+| Symptome | Cause probable |
 |----------|----------------|
-| Erreur CORS sur negotiate | Origine front absente du CORS Function App |
-| `Connexion SignalR impossible` | `AzureSignalRConnectionString` manquante ou mode SignalR ≠ Serverless |
+| Erreur CORS sur negotiate (local) | Front appele 7071 directement ; relancer `npm run dev` (proxy) ou configurer CORS |
+| Erreur CORS sur negotiate (Azure) | Origine front absente du CORS Function App |
+| `Connexion SignalR impossible` | `AzureSignalRConnectionString` manquante ou mode SignalR != Serverless |
+| URL Functions sans `https://` | Corriger `VITE_FUNCTIONS_BASE_URL=https://...` |
 | Pas de toast après upload | Binding SignalR ou hub `jobs` ; vérifier logs `ProcessDocument` |
 | 404 sur `/api/negotiate` | Function `Negotiate` non déployée ; redéployer le worker |
 

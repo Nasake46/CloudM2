@@ -18,16 +18,35 @@ type JobUpdatedMessage = {
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") ?? "http://localhost:8000";
 
-const FUNCTIONS_BASE_URL =
-  import.meta.env.VITE_FUNCTIONS_BASE_URL?.replace(/\/$/, "") ?? "http://localhost:7071";
-
 const SIGNALR_WAIT_MS = 10 * 60 * 1000;
 
+/** En dev, URL vide = requetes via le proxy Vite (/api -> localhost:7071), sans CORS. */
+function getFunctionsBaseUrl(): string {
+  if (import.meta.env.DEV) {
+    return "";
+  }
+
+  const configured = import.meta.env.VITE_FUNCTIONS_BASE_URL?.replace(/\/$/, "");
+  if (!configured) {
+    return "https://nasa-function-app.azurewebsites.net";
+  }
+  if (!/^https?:\/\//i.test(configured)) {
+    return `https://${configured}`;
+  }
+  return configured;
+}
+
 function createJobHubConnection(): signalR.HubConnection {
+  const functionsBase = getFunctionsBaseUrl();
+  const hubUrl = functionsBase ? `${functionsBase}/api` : "/api";
+
   return new signalR.HubConnectionBuilder()
-    .withUrl(`${FUNCTIONS_BASE_URL}/api`, {
+    .withUrl(hubUrl, {
       accessTokenFactory: async () => {
-        const response = await fetch(`${FUNCTIONS_BASE_URL}/api/negotiate`, {
+        const negotiateUrl = functionsBase
+          ? `${functionsBase}/api/negotiate`
+          : "/api/negotiate";
+        const response = await fetch(negotiateUrl, {
           method: "POST"
         });
         if (!response.ok) {
