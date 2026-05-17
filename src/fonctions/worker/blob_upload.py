@@ -4,6 +4,7 @@ import json
 import azure.functions as func
 
 from cosmos_jobs import extract_job_id_from_blob_name, update_job
+from signalr_messages import HUB_NAME, job_update_payload, serialize_signalr_messages
 
 blob_upload_bp = func.Blueprint()
 
@@ -19,7 +20,17 @@ blob_upload_bp = func.Blueprint()
     queue_name="docq",
     connection="docbus",
 )
-def blob_upload(myblob: func.InputStream, queue_msg: func.Out[str]):
+@blob_upload_bp.generic_output_binding(
+    arg_name="signalRMessages",
+    type="signalR",
+    hubName=HUB_NAME,
+    connectionStringSetting="AzureSignalRConnectionString",
+)
+def blob_upload(
+    myblob: func.InputStream,
+    queue_msg: func.Out[str],
+    signalRMessages: func.Out[str],
+):
     logging.info(
         "Blob trigger processed blob. Name=%s Size=%s bytes",
         myblob.name,
@@ -43,6 +54,9 @@ def blob_upload(myblob: func.InputStream, queue_msg: func.Out[str]):
                     "size": myblob.length,
                 }
             )
+        )
+        signalRMessages.set(
+            serialize_signalr_messages(job_update_payload(job_id, "UPLOADED"))
         )
         logging.info("Job %s sent to Service Bus queue docq", job_id)
     except Exception:

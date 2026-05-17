@@ -33,6 +33,7 @@ jobs:
           push: true
           build-args: |
             VITE_API_BASE_URL=${{ secrets.FRONTEND_API_BASE_URL }}
+            VITE_FUNCTIONS_BASE_URL=${{ secrets.FRONTEND_FUNCTIONS_BASE_URL }}
           tags: |
             ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
             ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:latest

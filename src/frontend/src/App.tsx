@@ -1,4 +1,5 @@
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
+import * as signalR from "@microsoft/signalr";
 
 type JobCreateResponse = {
   job_id: string;
@@ -7,19 +8,39 @@ type JobCreateResponse = {
   upload_url: string;
 };
 
-type JobDetail = {
-  id: string;
+type JobUpdatedMessage = {
+  jobId: string;
   status: string;
   tags?: string[];
-  fileName?: string;
-  error?: string | null;
+  error?: string;
 };
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") ?? "http://localhost:8000";
 
-const POLL_INTERVAL_MS = 2000;
-const POLL_MAX_MS = 10 * 60 * 1000;
+const FUNCTIONS_BASE_URL =
+  import.meta.env.VITE_FUNCTIONS_BASE_URL?.replace(/\/$/, "") ?? "http://localhost:7071";
+
+const SIGNALR_WAIT_MS = 10 * 60 * 1000;
+
+function createJobHubConnection(): signalR.HubConnection {
+  return new signalR.HubConnectionBuilder()
+    .withUrl(`${FUNCTIONS_BASE_URL}/api`, {
+      accessTokenFactory: async () => {
+        const response = await fetch(`${FUNCTIONS_BASE_URL}/api/negotiate`, {
+          method: "POST"
+        });
+        if (!response.ok) {
+          throw new Error("Negotiation SignalR echouee.");
+        }
+        const data = (await response.json()) as { accessToken: string };
+        return data.accessToken;
+      }
+    })
+    .withAutomaticReconnect()
+    .configureLogging(signalR.LogLevel.Warning)
+    .build();
+}
 
 async function createJob(file: File): Promise<JobCreateResponse> {
   const response = await fetch(`${API_BASE_URL}/jobs`, {
@@ -38,35 +59,6 @@ async function createJob(file: File): Promise<JobCreateResponse> {
   }
 
   return response.json();
-}
-
-async function fetchJob(jobId: string): Promise<JobDetail> {
-  const response = await fetch(`${API_BASE_URL}/jobs/${jobId}`);
-  if (!response.ok) {
-    throw new Error("Impossible de recuperer le statut du job.");
-  }
-  return response.json();
-}
-
-async function pollUntilProcessed(jobId: string, signal: AbortSignal): Promise<JobDetail> {
-  const deadline = Date.now() + POLL_MAX_MS;
-  while (Date.now() < deadline) {
-    if (signal.aborted) {
-      throw new DOMException("Aborted", "AbortError");
-    }
-    const job = await fetchJob(jobId);
-    if (job.status === "PROCESSED") {
-      return job;
-    }
-    if (job.status === "ERROR" || job.status === "FAILED") {
-      throw new Error(typeof job.error === "string" ? job.error : "Traitement en erreur.");
-    }
-    await new Promise<void>((resolve) => {
-      const t = setTimeout(resolve, POLL_INTERVAL_MS);
-      signal.addEventListener("abort", () => clearTimeout(t), { once: true });
-    });
-  }
-  throw new Error("Delai depasse en attendant la fin du traitement.");
 }
 
 async function uploadToBlob(uploadUrl: string, file: File): Promise<void> {
@@ -92,45 +84,85 @@ export default function App() {
   const [toast, setToast] = useState<{ title: string; tags: string[] } | null>(null);
   const [toastError, setToastError] = useState<string | null>(null);
   const [isWaitingProcessed, setIsWaitingProcessed] = useState(false);
-  const pollAbortRef = useRef<AbortController | null>(null);
-
-  useEffect(() => {
-    return () => pollAbortRef.current?.abort();
-  }, []);
+  const [pipelineStatus, setPipelineStatus] = useState<string | null>(null);
 
   useEffect(() => {
     if (!success?.job_id) {
       return;
     }
 
+    const jobId = success.job_id;
     setToast(null);
     setToastError(null);
     setIsWaitingProcessed(true);
-    pollAbortRef.current?.abort();
-    const controller = new AbortController();
-    pollAbortRef.current = controller;
+    setPipelineStatus("Connexion SignalR…");
 
     let cancelled = false;
+    const connection = createJobHubConnection();
 
-    (async () => {
-      try {
-        const job = await pollUntilProcessed(success.job_id, controller.signal);
-        if (cancelled) return;
+    const timeoutId = window.setTimeout(() => {
+      if (!cancelled) {
+        setToastError("Delai depasse en attendant la fin du traitement.");
+        setIsWaitingProcessed(false);
+        void connection.stop();
+      }
+    }, SIGNALR_WAIT_MS);
+
+    const handleJobUpdated = (payload: JobUpdatedMessage) => {
+      if (cancelled || payload.jobId !== jobId) {
+        return;
+      }
+
+      setPipelineStatus(payload.status);
+
+      if (payload.status === "PROCESSED") {
         setToast({
           title: "Document traite",
-          tags: Array.isArray(job.tags) ? job.tags : []
+          tags: Array.isArray(payload.tags) ? payload.tags : []
         });
-      } catch (e) {
-        if (cancelled || (e instanceof DOMException && e.name === "AbortError")) return;
-        setToastError(e instanceof Error ? e.message : "Echec du suivi du traitement.");
-      } finally {
-        if (!cancelled) setIsWaitingProcessed(false);
+        setIsWaitingProcessed(false);
+        window.clearTimeout(timeoutId);
+        void connection.stop();
+        return;
+      }
+
+      if (payload.status === "ERROR" || payload.status === "FAILED") {
+        setToastError(
+          typeof payload.error === "string" ? payload.error : "Traitement en erreur."
+        );
+        setIsWaitingProcessed(false);
+        window.clearTimeout(timeoutId);
+        void connection.stop();
+      }
+    };
+
+    connection.on("jobUpdated", handleJobUpdated);
+
+    void (async () => {
+      try {
+        await connection.start();
+        if (!cancelled) {
+          setPipelineStatus("En attente du traitement…");
+        }
+      } catch (connectionError) {
+        if (cancelled) {
+          return;
+        }
+        setToastError(
+          connectionError instanceof Error
+            ? connectionError.message
+            : "Connexion SignalR impossible."
+        );
+        setIsWaitingProcessed(false);
+        window.clearTimeout(timeoutId);
       }
     })();
 
     return () => {
       cancelled = true;
-      controller.abort();
+      window.clearTimeout(timeoutId);
+      connection.off("jobUpdated", handleJobUpdated);
+      void connection.stop();
     };
   }, [success?.job_id]);
 
@@ -145,6 +177,7 @@ export default function App() {
     setIsSubmitting(true);
     setError(null);
     setSuccess(null);
+    setPipelineStatus(null);
 
     try {
       const job = await createJob(selectedFile);
@@ -167,8 +200,8 @@ export default function App() {
         <p className="eyebrow">CloudM2</p>
         <h1>Uploader un document vers Azure Blob</h1>
         <p className="intro">
-          Le front cree un job via l&apos;API, recupere une URL SAS puis envoie le fichier
-          directement dans le conteneur Blob.
+          Le front cree un job via l&apos;API, uploade le fichier vers Blob, puis recoit les
+          mises a jour en temps reel via Azure SignalR (hub <code>jobs</code>).
         </p>
 
         <form className="upload-form" onSubmit={handleSubmit}>
@@ -204,7 +237,10 @@ export default function App() {
             <p>Statut initial: {success.status}</p>
             <p>Cree le: {new Date(success.created_at).toLocaleString("fr-FR")}</p>
             {isWaitingProcessed && (
-              <p className="processing-hint">Traitement du document en cours…</p>
+              <p className="processing-hint">
+                Traitement du document en cours…
+                {pipelineStatus ? ` (${pipelineStatus})` : ""}
+              </p>
             )}
           </div>
         )}
