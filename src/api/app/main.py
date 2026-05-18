@@ -26,7 +26,7 @@ app.include_router(signalr_router)
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {"status": "okk"}
 
 @app.post("/echo")
 def echo(req: dict):

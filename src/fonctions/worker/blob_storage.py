@@ -22,3 +22,4 @@ def blob_exists(blob_name: str) -> bool:
         blob=blob_name,
     )
     return blob_client.exists()
+
