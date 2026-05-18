@@ -152,7 +152,8 @@ CloudM2/
 │       └── src/App.tsx
 ├── docs/
 │   ├── SIGNALR_AZURE.md
-│   └── SERVICE_BUS_DLQ_AZURE.md
+│   ├── SERVICE_BUS_DLQ_AZURE.md
+│   └── AI_TAGGING.md
 ├── .github/workflows/        # CI/CD
 └── TP.md                     # Énoncé du TP
 ```
