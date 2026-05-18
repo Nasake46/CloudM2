@@ -250,6 +250,7 @@ Scénarios détaillés : [docs/SERVICE_BUS_DLQ_AZURE.md](docs/SERVICE_BUS_DLQ_AZ
 
 **DLQ** — Retries Service Bus + handler dédié ; pas de fallback silencieux sur l’IA (un échec IA compte comme erreur).
 
+
 ---
 
 ## Documentation complémentaire
